@@ -2,7 +2,6 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 @Injectable()
 export class AiService {
   async parseBudget(text: string) {
-    // Buscando a chave do arquivo .env
     const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
@@ -34,7 +33,7 @@ export class AiService {
               },
             ],
             response_format: { type: 'json_object' },
-            temperature: 0.1, // Mantém a resposta estável e técnica
+            temperature: 0.1,
           }),
         },
       );
@@ -46,7 +45,6 @@ export class AiService {
         throw new Error(data.error?.message || 'Erro na comunicação com a IA');
       }
 
-      // A resposta da Groq vem em data.choices[0].message.content como string
       const content = data.choices[0].message.content;
       return JSON.parse(content);
     } catch (error) {

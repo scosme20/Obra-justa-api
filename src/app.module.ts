@@ -8,13 +8,11 @@ import { AiModule } from './ai/ai.module';
 
 @Module({
   imports: [
-    // Configuração global de variáveis de ambiente
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env', // Força a leitura do arquivo na raiz do projeto
+      envFilePath: '.env',
     }),
 
-    // Seus módulos de negócio
     CatalogModule,
     InventoryModule,
     AiModule,

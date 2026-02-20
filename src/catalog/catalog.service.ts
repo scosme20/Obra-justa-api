@@ -6,7 +6,6 @@ import { MasterProduct } from './interfaces/product.interface';
 export class CatalogService {
   private collection = db.collection('master_products');
 
-  // Criar um novo produto no catálogo mestre
   async createProduct(product: MasterProduct) {
     const docRef = this.collection.doc();
     const newProduct = {
@@ -18,13 +17,11 @@ export class CatalogService {
     return newProduct;
   }
 
-  // Listar todos os produtos
   async findAll() {
     const snapshot = await this.collection.where('active', '==', true).get();
     return snapshot.docs.map((doc) => doc.data());
   }
 
-  // Buscar produtos por categoria
   async findByCategory(category: string) {
     const snapshot = await this.collection
       .where('category', '==', category)
