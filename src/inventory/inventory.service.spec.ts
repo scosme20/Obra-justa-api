@@ -31,16 +31,22 @@ export class InventoryService {
     return snapshot.docs.map((doc) => doc.data());
   }
 
-  async createBudget(items: any[]) {
+  async createBudget(items: any[], userId: string) {
     const docRef = this.budgetsCollection.doc();
-    
+  
     const budgetData = {
       id: docRef.id,
-      items,
-      totalItems: items.length,
-      createdAt: new Date(),
+      userId,
+      items: items.map((item) => ({
+        ...item,
+        product: item.product.toLowerCase().trim(),
+        quantity: Number(item.quantity) || 1,
+        price: Number(item.price) || 0,
+        category: item.category || 'Outros',
+        subtotal: (Number(item.quantity) || 1) * (Number(item.price) || 0),
+      })),
     };
-
+  
     await docRef.set(budgetData);
     return budgetData;
   }
