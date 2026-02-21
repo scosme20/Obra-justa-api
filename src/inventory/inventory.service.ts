@@ -84,7 +84,6 @@ export class InventoryService {
       pdfDoc.on('data', (chunk) => chunks.push(chunk));
       pdfDoc.on('end', () => resolve(Buffer.concat(chunks)));
 
-      // Cabeçalho Profissional
       pdfDoc
         .fillColor('#2c3e50')
         .font('Helvetica-Bold')
@@ -100,8 +99,11 @@ export class InventoryService {
       pdfDoc.rect(50, 100, 500, 2).fill('#3498db');
       pdfDoc.moveDown(2);
 
-      pdfDoc.fillColor('black').font('Helvetica').fontSize(10);
-      pdfDoc.text(`Responsável: ${userId.toUpperCase()}`);
+      pdfDoc
+        .fillColor('black')
+        .font('Helvetica')
+        .fontSize(10)
+        .text(`Responsável: ${userId.toUpperCase()}`);
       pdfDoc.text(`Protocolo: ${budgetId}`);
       const dateStr =
         data.createdAt?.toLocaleDateString('pt-BR') ||
@@ -109,7 +111,6 @@ export class InventoryService {
       pdfDoc.text(`Data de Emissão: ${dateStr}`);
       pdfDoc.moveDown();
 
-      // Tabela
       pdfDoc
         .font('Helvetica-Bold')
         .text('Item / Categoria', 50, pdfDoc.y, { continued: true });
@@ -220,14 +221,21 @@ export class InventoryService {
       (sum, b: any) => sum + (Number(b.totalValue) || 0),
       0,
     );
+    let totalSavings = 0;
     const categoryTotals = {};
-    budgets.forEach((budget: any) => {
-      budget.items?.forEach((item) => {
+
+    for (const budget of budgets) {
+      for (const item of budget.items || []) {
         const cat = item.category || 'Outros';
         categoryTotals[cat] =
           (categoryTotals[cat] || 0) + (Number(item.subtotal) || 0);
-      });
-    });
+
+        const avgPrice = await this.getProductAverage(userId, item.product);
+        if (avgPrice > 0 && item.price < avgPrice) {
+          totalSavings += (avgPrice - item.price) * item.quantity;
+        }
+      }
+    }
 
     const chartData = Object.keys(categoryTotals).map((category) => ({
       name: category,
@@ -238,11 +246,50 @@ export class InventoryService {
           : 0,
     }));
 
+    // --- LÓGICA DE PREDIÇÃO ---
+    const today = new Date();
+    const currentMonth = today.getMonth() + 1;
+    const currentYear = today.getFullYear();
+    let projectedSpending = 0;
+
+    if (Number(month) === currentMonth && Number(year) === currentYear) {
+      const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+      const dayOfMonth = today.getDate();
+      const dailyAverage = totalSpent / dayOfMonth;
+      projectedSpending = Number((dailyAverage * daysInMonth).toFixed(2));
+    }
+
+    // --- LÓGICA DE LIMITE ---
+    const monthlyLimit = await this.getUserLimit(userId);
+    const limitReachedPercent =
+      monthlyLimit > 0
+        ? Number(((totalSpent / monthlyLimit) * 100).toFixed(1))
+        : 0;
+
+    let alertMessage = 'Defina um limite para monitorar seus gastos.';
+    if (monthlyLimit > 0) {
+      if (limitReachedPercent >= 100)
+        alertMessage = '⚠️ LIMITE ATINGIDO! Cuidado com novos gastos.';
+      else if (limitReachedPercent >= 80)
+        alertMessage = '🟡 Atenção: Você já usou 80% do seu teto mensal.';
+      else alertMessage = '🟢 Seu orçamento está saudável para este mês.';
+    }
+
+    // Substitui alertMessage se houver uma tendência de estouro
+    if (projectedSpending > monthlyLimit && monthlyLimit > 0) {
+      alertMessage = `🚨 TENDÊNCIA: Você deve fechar o mês com R$ ${projectedSpending}, superando seu limite.`;
+    }
+
     return {
       userId,
       periodo: month && year ? `${month}/${year}` : 'Total Acumulado',
       stats: {
         totalSpent: Number(totalSpent.toFixed(2)),
+        totalSavings: Number(totalSavings.toFixed(2)),
+        projectedSpending,
+        monthlyLimit,
+        limitReachedPercent,
+        alertMessage,
         totalBudgets: budgets.length,
         averageBudget:
           budgets.length > 0
@@ -316,5 +363,24 @@ export class InventoryService {
     await this.getBudgetById(id);
     await this.budgetsCollection.doc(id).delete();
     return { message: 'Orçamento removido', id };
+  }
+
+  async setUserLimit(userId: string, monthlyLimit: number) {
+    await db
+      .collection('userSettings')
+      .doc(userId)
+      .set(
+        {
+          monthlyLimit: Number(monthlyLimit),
+          updatedAt: new Date(),
+        },
+        { merge: true },
+      );
+    return { userId, monthlyLimit };
+  }
+
+  async getUserLimit(userId: string): Promise<number> {
+    const doc = await db.collection('userSettings').doc(userId).get();
+    return doc.exists ? doc.data().monthlyLimit : 0;
   }
 }

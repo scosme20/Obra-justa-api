@@ -1,10 +1,41 @@
-import { Controller, Get, Delete, Param, Query, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Param,
+  Query,
+  Res,
+  Body,
+} from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { Response } from 'express';
 
 @Controller('inventory')
 export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) {}
+
+  @Post('budget')
+  async createBudget(@Body() body: { items: any[]; userId: string }) {
+    return await this.inventoryService.createBudget(body.items, body.userId);
+  }
+
+  @Post('limit/:userId')
+  async setLimit(
+    @Param('userId') userId: string,
+    @Body('monthlyLimit') monthlyLimit: number,
+  ) {
+    return await this.inventoryService.setUserLimit(userId, monthlyLimit);
+  }
+
+  @Get('dashboard/:userId')
+  async getDashboard(
+    @Param('userId') userId: string,
+    @Query('month') month?: number,
+    @Query('year') year?: number,
+  ) {
+    return await this.inventoryService.getUserDashboard(userId, month, year);
+  }
 
   @Get('budgets/:userId')
   async listAll(
@@ -15,22 +46,12 @@ export class InventoryController {
     return await this.inventoryService.getAllBudgets(userId, limit, search);
   }
 
-  @Get('dashboard/:userId')
-  async getDashboard(@Param('userId') userId: string) {
-    return await this.inventoryService.getUserDashboard(userId);
-  }
-
   @Get('report/:userId/:category')
   async getCategoryReport(
     @Param('userId') userId: string,
     @Param('category') category: string,
   ) {
     return await this.inventoryService.getCategoryReport(userId, category);
-  }
-
-  @Delete('budget/:id')
-  async deleteBudget(@Param('id') id: string) {
-    return await this.inventoryService.deleteBudget(id);
   }
 
   @Get('export/pdf/:id')
@@ -64,5 +85,10 @@ export class InventoryController {
     });
     msg += `\n💰 *Total: R$ ${doc.totalValue.toFixed(2)}*`;
     return { message: msg };
+  }
+
+  @Delete('budget/:id')
+  async deleteBudget(@Param('id') id: string) {
+    return await this.inventoryService.deleteBudget(id);
   }
 }
