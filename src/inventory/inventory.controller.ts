@@ -1,5 +1,6 @@
-import { Controller, Get, Delete, Param, Query } from '@nestjs/common';
+import { Controller, Get, Delete, Param, Query, Res } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
+import { Response } from 'express';
 
 @Controller('inventory')
 export class InventoryController {
@@ -19,11 +20,6 @@ export class InventoryController {
     return await this.inventoryService.getUserDashboard(userId);
   }
 
-  @Get('analysis/:userId')
-  async getAnalysis(@Param('userId') userId: string) {
-    return await this.inventoryService.getPriceComparison(userId);
-  }
-
   @Get('report/:userId/:category')
   async getCategoryReport(
     @Param('userId') userId: string,
@@ -35,5 +31,38 @@ export class InventoryController {
   @Delete('budget/:id')
   async deleteBudget(@Param('id') id: string) {
     return await this.inventoryService.deleteBudget(id);
+  }
+
+  @Get('export/pdf/:id')
+  async exportPDF(@Param('id') id: string, @Res() res: Response) {
+    const buffer = await this.inventoryService.generateBudgetPDF(id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename=orcamento_${id}.pdf`,
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
+  }
+
+  @Get('export/excel/:id')
+  async exportExcel(@Param('id') id: string, @Res() res: Response) {
+    const buffer = await this.inventoryService.generateBudgetExcel(id);
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename=orcamento_${id}.xlsx`,
+    });
+    res.end(buffer);
+  }
+
+  @Get('export/whatsapp/:id')
+  async exportWhatsApp(@Param('id') id: string) {
+    const doc = await this.inventoryService.getBudgetById(id);
+    let msg = `*Relatório de Compra* 🏗️\n\n`;
+    doc.items.forEach((i: any) => {
+      msg += `🔹 *${i.product.toUpperCase()}*: ${i.quantity}x R$${i.price.toFixed(2)} = *R$${i.subtotal.toFixed(2)}*\n`;
+    });
+    msg += `\n💰 *Total: R$ ${doc.totalValue.toFixed(2)}*`;
+    return { message: msg };
   }
 }
