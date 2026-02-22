@@ -1,12 +1,27 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { db } from '../config/firebase.config';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
+import { CreateProfileDto } from './dto/create-profile.dto';
+import { CreateCostDto } from './dto/create-cost.dto';
 
 @Injectable()
-export class MarketplaceService {
+export class MarketplaceService implements OnModuleInit {
   private profilesCollection = db.collection('profiles');
   private costsCollection = db.collection('construction_costs');
-  private genAI = new GoogleGenerativeAI('SUA_CHAVE_AQUI');
+  private groq: Groq;
+
+  constructor(private configService: ConfigService) {}
+
+  onModuleInit() {
+    const apiKey = this.configService.get<string>('GROQ_API_KEY');
+    if (!apiKey) {
+      console.error(
+        '❌ [MarketplaceService] GROQ_API_KEY não encontrada no .env',
+      );
+    }
+    this.groq = new Groq({ apiKey });
+  }
 
   private calculateDistance(
     lat1: number,
@@ -28,7 +43,7 @@ export class MarketplaceService {
     );
   }
 
-  async createProfile(data: any) {
+  async createProfile(data: CreateProfileDto) {
     const docRef = this.profilesCollection.doc();
     const newProfile = {
       id: docRef.id,
@@ -36,7 +51,7 @@ export class MarketplaceService {
       rating: 5.0,
       reviewCount: 0,
       createdAt: new Date().toISOString(),
-      active: true,
+      active: data.active ?? true,
     };
     await docRef.set(newProfile);
     return newProfile;
@@ -47,9 +62,7 @@ export class MarketplaceService {
       .where('type', '==', type)
       .where('active', '==', true)
       .get();
-
-    if (snapshot.empty) return [];
-    return snapshot.docs.map((doc) => doc.data());
+    return snapshot.empty ? [] : snapshot.docs.map((doc) => doc.data());
   }
 
   async getProfileById(id: string) {
@@ -68,6 +81,7 @@ export class MarketplaceService {
       .where('specialty', '==', specialty)
       .where('active', '==', true)
       .get();
+
     const candidates = snapshot.docs.map((doc) => doc.data());
 
     const matches = candidates.map((pro: any) => {
@@ -83,100 +97,35 @@ export class MarketplaceService {
     });
 
     const sorted = matches.sort(
-      (a: any, b: any) =>
-        a.totalEstimated - b.totalEstimated || b.rating - a.rating,
+      (a, b) => a.totalEstimated - b.totalEstimated || b.rating - a.rating,
     );
 
     let aiVerdict = null;
     try {
-      const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+      const completion = await this.groq.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Você é um assistente técnico de obras. Seja curto e direto.',
+          },
+          {
+            role: 'user',
+            content: `Analise para ${specialty}: ${JSON.stringify(sorted.slice(0, 2))}. Recomende o melhor em 1 frase.`,
+          },
+        ],
+        model: 'llama-3.3-70b-versatile',
       });
-      const prompt = `Analise estes profissionais para ${specialty}: ${JSON.stringify(sorted.slice(0, 2))}. Recomende o melhor em 1 frase curta.`;
-      const result = await model.generateContent(prompt);
-      aiVerdict = result.response.text();
+      aiVerdict = completion.choices[0]?.message?.content;
     } catch (e) {
-      aiVerdict = 'Escolha baseada em menor custo e proximidade.';
+      aiVerdict =
+        'IA em manutenção. Escolha pelo melhor preço e proximidade abaixo.';
     }
 
     return { aiVerdict, results: sorted };
   }
 
-  async saveToFavorites(userId: string, profileId: string) {
-    const favoriteId = `${userId}_${profileId}`;
-    await db.collection('user_favorites').doc(favoriteId).set({
-      userId,
-      profileId,
-      savedAt: new Date().toISOString(),
-    });
-    return { message: 'Adicionado aos favoritos' };
-  }
-
-  async getUserFavorites(userId: string) {
-    const snapshot = await db
-      .collection('user_favorites')
-      .where('userId', '==', userId)
-      .get();
-    if (snapshot.empty) return [];
-
-    return await Promise.all(
-      snapshot.docs.map(async (doc) => {
-        const data: any = doc.data();
-        const profile = await this.getProfileById(data.profileId);
-        return { ...data, profileDetails: profile };
-      }),
-    );
-  }
-
-  async removeFavorite(userId: string, profileId: string) {
-    const favoriteId = `${userId}_${profileId}`;
-    await db.collection('user_favorites').doc(favoriteId).delete();
-    return { message: 'Removido dos favoritos' };
-  }
-
-  async addReview(
-    profileId: string,
-    userId: string,
-    rating: number,
-    comment: string,
-  ) {
-    const reviewRef = db.collection('reviews').doc();
-    const newReview = {
-      id: reviewRef.id,
-      profileId,
-      userId,
-      rating: Math.min(5, Math.max(1, rating)),
-      comment,
-      createdAt: new Date().toISOString(),
-    };
-    await reviewRef.set(newReview);
-    await this.updateProfileRating(profileId);
-    return newReview;
-  }
-
-  private async updateProfileRating(profileId: string) {
-    const snapshot = await db
-      .collection('reviews')
-      .where('profileId', '==', profileId)
-      .get();
-    if (snapshot.empty) return;
-    const ratings = snapshot.docs.map((doc) => doc.data().rating);
-    const average = ratings.reduce((a, b) => a + b, 0) / ratings.length;
-    await this.profilesCollection.doc(profileId).update({
-      rating: parseFloat(average.toFixed(1)),
-      reviewCount: ratings.length,
-    });
-  }
-
-  async getReviewsByProfile(profileId: string) {
-    const snapshot = await db
-      .collection('reviews')
-      .where('profileId', '==', profileId)
-      .get();
-    return snapshot.docs.map((doc) => doc.data());
-  }
-
-  async addConstructionCost(userId: string, data: any) {
+  async addConstructionCost(userId: string, data: CreateCostDto) {
     const docRef = this.costsCollection.doc();
     const costEntry = {
       id: docRef.id,
@@ -202,9 +151,11 @@ export class MarketplaceService {
     const totalActual = costs.reduce((acc, c) => acc + c.actualValue, 0);
 
     let healthScore = 100;
-    if (totalActual > totalPlanned) {
-      const percentOver = ((totalActual - totalPlanned) / totalPlanned) * 100;
-      healthScore = Math.max(0, 100 - percentOver);
+    if (totalPlanned > 0 && totalActual > totalPlanned) {
+      healthScore = Math.max(
+        0,
+        100 - ((totalActual - totalPlanned) / totalPlanned) * 100,
+      );
     }
 
     return {
@@ -218,18 +169,26 @@ export class MarketplaceService {
   async getAiFinanceAdvice(userId: string) {
     const summary = await this.getFinancialSummary(userId);
     try {
-      const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+      const completion = await this.groq.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'Você é um consultor financeiro de obras.',
+          },
+          {
+            role: 'user',
+            content: `Gasto Real: R$${summary.totalActual} de R$${summary.totalPlanned}. Score: ${summary.healthScore}%. Dê 1 conselho curto.`,
+          },
+        ],
+        model: 'llama-3.3-70b-versatile',
       });
-      const prompt = `Finanças da obra: Planejado R$${summary.totalPlanned}, Real R$${summary.totalActual}, Score ${summary.healthScore}%. Dê um conselho curto.`;
-      const result = await model.generateContent(prompt);
       return {
-        advice: result.response.text(),
+        advice: completion.choices[0]?.message?.content,
         healthScore: summary.healthScore,
       };
     } catch (e) {
       return {
-        advice: 'Mantenha os registros atualizados.',
+        advice: 'Mantenha seus custos atualizados.',
         healthScore: summary.healthScore,
       };
     }
@@ -239,36 +198,81 @@ export class MarketplaceService {
     const snapshot = await this.profilesCollection
       .where('type', '==', 'store')
       .get();
-    const allOffers = [];
+    const offers = [];
 
     snapshot.docs.forEach((doc) => {
-      const store: any = doc.data();
-      const distanceKm =
-        userLat && userLng && store.lat && store.lng
-          ? this.calculateDistance(userLat, userLng, store.lat, store.lng)
-          : null;
+      const store = doc.data();
+      if (store.offers && Array.isArray(store.offers)) {
+        const dist =
+          userLat && userLng && store.lat && store.lng
+            ? this.calculateDistance(userLat, userLng, store.lat, store.lng)
+            : null;
 
-      if (store.offers) {
         const filtered = category
           ? store.offers.filter(
-              (o: any) => o.category.toLowerCase() === category.toLowerCase(),
+              (o: any) => o.category?.toLowerCase() === category.toLowerCase(),
             )
           : store.offers;
 
-        allOffers.push(
+        offers.push(
           ...filtered.map((o: any) => ({
             ...o,
             storeName: store.name,
-            storeId: store.id,
-            distanceKm,
-            address: store.address,
+            distanceKm: dist,
           })),
         );
       }
     });
+    return offers.sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999));
+  }
 
-    return userLat
-      ? allOffers.sort((a, b) => (a.distanceKm || 999) - (b.distanceKm || 999))
-      : allOffers;
+  async saveToFavorites(userId: string, profileId: string) {
+    await db
+      .collection('user_favorites')
+      .doc(`${userId}_${profileId}`)
+      .set({ userId, profileId, savedAt: new Date().toISOString() });
+    return { message: 'Salvo!' };
+  }
+
+  async removeFavorite(userId: string, profileId: string) {
+    await db
+      .collection('user_favorites')
+      .doc(`${userId}_${profileId}`)
+      .delete();
+    return { message: 'Removido!' };
+  }
+
+  async addReview(
+    profileId: string,
+    userId: string,
+    rating: number,
+    comment: string,
+  ) {
+    const reviewRef = db.collection('reviews').doc();
+    const review = {
+      id: reviewRef.id,
+      profileId,
+      userId,
+      rating,
+      comment,
+      createdAt: new Date().toISOString(),
+    };
+    await reviewRef.set(review);
+    await this.updateProfileRating(profileId);
+    return review;
+  }
+
+  private async updateProfileRating(profileId: string) {
+    const snapshot = await db
+      .collection('reviews')
+      .where('profileId', '==', profileId)
+      .get();
+    if (snapshot.empty) return;
+    const ratings = snapshot.docs.map((d) => d.data().rating);
+    const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+    await this.profilesCollection.doc(profileId).update({
+      rating: parseFloat(avg.toFixed(1)),
+      reviewCount: ratings.length,
+    });
   }
 }

@@ -8,7 +8,14 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors();
-  app.useGlobalPipes(new ValidationPipe());
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
 
   const config = new DocumentBuilder()
     .setTitle('Obra Justa API')
@@ -16,8 +23,8 @@ async function bootstrap() {
       'Gestão Financeira, Marketplace e Logística para Construção',
     )
     .setVersion('1.0')
-    .addTag('inventory', 'Orçamentos e Inteligência de Gastos')
     .addTag('marketplace', 'Profissionais, Lojas e Entregadores')
+    .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
@@ -29,10 +36,5 @@ async function bootstrap() {
   console.log(`\n🚀 API rodando em: http://localhost:${port}`);
   console.log(`📝 Swagger disponível em: http://localhost:${port}/api\n`);
 }
-
-console.log(
-  'TESTE ENV:',
-  process.env.GROQ_API_KEY ? '✅ Chave carregada' : '❌ Chave não encontrada',
-);
 
 bootstrap();
