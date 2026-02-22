@@ -6,6 +6,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { AiModule } from './ai/ai.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { AuthModule } from './auth/auth.module';
+import { ScheduleModule } from './schedule/schedule.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AuthModule } from './auth/auth.module';
     AiModule,
     MarketplaceModule,
     AuthModule,
+    ScheduleModule,
   ],
   controllers: [AppController],
   providers: [AppService],

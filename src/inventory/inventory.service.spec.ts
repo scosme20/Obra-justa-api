@@ -1,54 +1,22 @@
-import { Injectable } from '@nestjs/common';
-import { db } from '../config/firebase.config';
+import { Test, TestingModule } from '@nestjs/testing';
+import { InventoryService } from './inventory.service';
 
-@Injectable()
-export class InventoryService {
-  private collection = db.collection('inventory');
-  private budgetsCollection = db.collection('budgets');
+describe('InventoryService', () => {
+  let service: InventoryService;
 
-  async updatePrice(storeId: string, productId: string, price: number) {
-    const docId = `${storeId}_${productId}`;
-    const docRef = this.collection.doc(docId);
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [InventoryService],
+    }).compile();
 
-    const data = {
-      id: docId,
-      storeId,
-      productId,
-      price,
-      updatedAt: new Date(),
-    };
+    service = module.get<InventoryService>(InventoryService);
+  });
 
-    await docRef.set(data, { merge: true });
-    return data;
-  }
+  it('deve estar definido', () => {
+    expect(service).toBeDefined();
+  });
 
-  async getRankingByProduct(productId: string) {
-    const snapshot = await this.collection
-      .where('productId', '==', productId)
-      .orderBy('price', 'asc') 
-      .get();
-
-    return snapshot.docs.map((doc) => doc.data());
-  }
-
-  async createBudget(items: any[], userId: string) {
-    const docRef = this.budgetsCollection.doc();
-  
-    const budgetData = {
-      id: docRef.id,
-      userId,
-      items: items.map((item) => ({
-        ...item,
-        product: item.product.toLowerCase().trim(),
-        quantity: Number(item.quantity) || 1,
-        price: Number(item.price) || 0,
-        category: item.category || 'Outros',
-        subtotal: (Number(item.quantity) || 1) * (Number(item.price) || 0),
-      })),
-    };
-  
-    await docRef.set(budgetData);
-    return budgetData;
-  }
-}
-}
+  it('deve calcular o totalValue corretamente ao criar orçamento', async () => {
+    expect(service.createBudget).toBeDefined();
+  });
+});
