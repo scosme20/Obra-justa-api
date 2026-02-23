@@ -1,12 +1,17 @@
-import { Module } from '@nestjs/common';
-import { AiController } from './ai.controller';
-import { AiService } from './ai.service';
+import { Module, forwardRef } from '@nestjs/common';
+import { AiStockService } from './ai-stock.service';
+import { AiService } from './ai.service'; // Importe o AiService
+import { AiController } from './ai.controller'; // Importe o AiController
 import { InventoryModule } from '../inventory/inventory.module';
+import { ScheduleModule } from '../schedule/schedule.module';
 
 @Module({
-  imports: [InventoryModule],
+  imports: [
+    forwardRef(() => InventoryModule),
+    forwardRef(() => ScheduleModule),
+  ],
   controllers: [AiController],
-  providers: [AiService],
-  exports: [AiService],
+  providers: [AiStockService, AiService],
+  exports: [AiStockService, AiService],
 })
 export class AiModule {}

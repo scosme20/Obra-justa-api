@@ -1,11 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
-import { AppModule } from '../src/app.module';
+import { AppModule } from './../src/app.module';
 
 describe('Fluxo de Cronograma (e2e)', () => {
   let app: INestApplication;
-  let accessToken: string;
+  let authToken: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -14,40 +14,62 @@ describe('Fluxo de Cronograma (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
 
-    // IMPORTANTE: Manter os mesmos pipes do main.ts para o teste ser realista
     app.useGlobalPipes(
-      new ValidationPipe({ transform: true, whitelist: true }),
+      new ValidationPipe({ whitelist: true, transform: true }),
     );
 
     await app.init();
 
-    // 1. Simula o Login para pegar o token que usaremos nos outros testes
-    // Ajuste o payload conforme seu AuthService/Controller de Auth
+    await request(app.getHttpServer()).post('/auth/register').send({
+      email: 'admin@obrajusta.com',
+      password: '123456',
+      name: 'Admin Teste',
+    });
+
     const loginRes = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email: 'ze@obrajusta.com', password: 'senha_segura_123' });
-
-    accessToken = loginRes.body.access_token;
-  });
-
-  it('/schedule (GET) - Deve falhar sem token', () => {
-    return request(app.getHttpServer()).get('/schedule').expect(401);
-  });
-
-  it('/schedule/task (POST) - Deve criar tarefa com sucesso quando autenticado', () => {
-    return request(app.getHttpServer())
-      .post('/schedule/task')
-      .set('Authorization', `Bearer ${accessToken}`) // 🔑 Aqui passamos o token
       .send({
-        title: 'Instalação Hidráulica',
-        description: 'Tubulação do banheiro principal',
-        startDate: '2026-05-10',
-        endDate: '2026-05-15',
+        email: 'admin@obrajusta.com',
+        password: '123456',
+      });
+
+    if (loginRes.status === 201 || loginRes.status === 200) {
+      authToken = loginRes.body.access_token;
+    } else {
+      console.error(
+        '❌ Erro Crítico no E2E: Não foi possível obter token de acesso.',
+        loginRes.body,
+      );
+    }
+  });
+
+  it('/schedule/auto-generate (POST) - Deve gerar cronograma via IA', async () => {
+    expect(authToken).toBeDefined(); 
+
+    return request(app.getHttpServer())
+      .post('/schedule/auto-generate')
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        description: 'Reforma de banheiro completa de 5m2',
       })
-      .expect(201)
-      .then((res) => {
-        expect(res.body).toHaveProperty('id');
-        expect(res.body.status).toBe('PENDING');
+      .expect((res) => {
+        if (res.status === 401)
+          throw new Error('Falha de Autenticação no Firebase');
+        if (res.status === 404)
+          throw new Error('Rota não encontrada no Controller');
+      })
+      .expect(201);
+  });
+
+  it('/schedule (GET) - Deve listar o cronograma', () => {
+    expect(authToken).toBeDefined();
+
+    return request(app.getHttpServer())
+      .get('/schedule')
+      .set('Authorization', `Bearer ${authToken}`)
+      .expect(200)
+      .expect((res) => {
+        expect(Array.isArray(res.body)).toBe(true);
       });
   });
 

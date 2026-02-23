@@ -24,7 +24,17 @@ async function bootstrap() {
     )
     .setVersion('1.0')
     .addTag('marketplace', 'Profissionais, Lojas e Entregadores')
-    .addBearerAuth()
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'JWT',
+        description: 'Insira o token JWT',
+        in: 'header',
+      },
+      'JWT-auth', 
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
