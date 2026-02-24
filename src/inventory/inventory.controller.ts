@@ -13,7 +13,7 @@ import { InventoryService } from './inventory.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Response } from 'express';
 import { AiStockService } from '../ai/ai-stock.service';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 
 @ApiTags('inventory')
 @ApiBearerAuth('JWT-auth')
@@ -25,25 +25,58 @@ export class InventoryController {
     private readonly aiStockService: AiStockService,
   ) {}
 
-  @ApiOperation({ summary: 'Cria um novo orçamento manualmente' })
   @Post('budget')
-  async create(@Request() req, @Body() body: { items: any[] }) {
-    return this.inventoryService.createBudget(body.items, req.user.userId);
+  @ApiOperation({ summary: 'Cria um novo orçamento completo' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        requestedBy: { type: 'string', example: 'João Silva' },
+        contractor: { type: 'string', example: 'Mestre de Obras' },
+        storeName: { type: 'string', example: 'Loja Construir' },
+        deliveryMan: { type: 'string', example: 'Carlos Entregas' },
+        totalEconomy: { type: 'string', example: '15%' },
+        economyValue: { type: 'string', example: 'R$ 150,00' },
+        applicationNotes: { type: 'string', example: 'Material para reboco.' },
+        logisticsInfo: {
+          type: 'object',
+          properties: {
+            origin: { type: 'string' },
+            destination: { type: 'string' },
+            distance: { type: 'string' },
+          },
+        },
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              product: { type: 'string' },
+              brand: { type: 'string' },
+              quantity: { type: 'number' },
+              price: { type: 'number' },
+              statusIa: { type: 'string' },
+              variation: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  })
+  async create(@Request() req, @Body() body: any) {
+    return this.inventoryService.createBudget(body, req.user.userId);
   }
 
-  @ApiOperation({ summary: 'Lista todos os orçamentos do usuário' })
   @Get('budgets')
   async findAll(@Request() req) {
     return this.inventoryService.getAllBudgets(req.user.userId);
   }
 
-  @ApiOperation({ summary: 'Confirma compra e move itens para o estoque' })
   @Post('budget/:id/confirm-purchase')
   async confirmPurchase(@Request() req, @Param('id') id: string) {
     return this.inventoryService.addToWorkStock(req.user.userId, id);
   }
 
-  @ApiOperation({ summary: 'Gera PDF de um orçamento específico' })
   @Get('budget/:id/pdf')
   async downloadPdf(@Param('id') id: string, @Res() res: Response) {
     const buffer = await this.inventoryService.generateBudgetPDF(id);
@@ -55,13 +88,11 @@ export class InventoryController {
     res.status(HttpStatus.OK).send(buffer);
   }
 
-  @ApiOperation({ summary: 'Obtém dados consolidados do dashboard' })
   @Get('dashboard')
   async getDashboard(@Request() req) {
     return this.inventoryService.getUserDashboard(req.user.userId);
   }
 
-  @ApiOperation({ summary: 'Análise de saúde do estoque via IA' })
   @Get('stock-advice')
   async getStockAdvice(@Request() req) {
     return await this.aiStockService.analyzeStockHealth(req.user.userId);

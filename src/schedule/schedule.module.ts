@@ -1,12 +1,13 @@
-import { Module, forwardRef } from '@nestjs/common'; // Importação do forwardRef
+import { Module, forwardRef } from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
 import { ScheduleController } from './schedule.controller';
+import { AiModule } from '../ai/ai.module';
 import { InventoryModule } from '../inventory/inventory.module';
 
 @Module({
-  imports: [forwardRef(() => InventoryModule)],
+  imports: [forwardRef(() => AiModule), forwardRef(() => InventoryModule)],
   controllers: [ScheduleController],
   providers: [ScheduleService],
-  exports: [ScheduleService],
+  exports: [ScheduleService], // CERTIFIQUE-SE DE QUE ESTÁ EXPORTADO AQUI
 })
 export class ScheduleModule {}
