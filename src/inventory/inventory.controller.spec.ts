@@ -46,6 +46,8 @@ describe('InventoryController (Integration)', () => {
     const body = {
       items: [{ product: 'Cimento', quantity: 10 }],
       requestedBy: 'Teste',
+      contractor: 'Contratante Teste',
+      storeName: 'Loja Teste',
     };
     const req = { user: { userId: 'user-123' } };
 

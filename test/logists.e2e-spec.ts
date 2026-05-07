@@ -39,13 +39,10 @@ describe('Logistics Flow (e2e)', () => {
       .post('/logistics/request')
       .set('Authorization', `Bearer ${authToken}`)
       .send({
-        origin: 'Rua das Obras, 100',
-        destination: 'Depósito Central, 500',
-        weight: 1200,
-        type: 'Ferragens',
-        budgetId: 'mock-budget-id',
         originCoords: { lat: -23.1, lng: -46.2 },
         destinationCoords: { lat: -23.2, lng: -46.3 },
+        totalWeight: 1200,
+        budgetId: 'mock-budget-id',
       })
       .expect(201)
       .expect((res) => {

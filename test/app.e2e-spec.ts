@@ -44,10 +44,10 @@ describe('Fluxo de Cronograma (e2e)', () => {
   });
 
   it('/schedule/auto-generate (POST) - Deve gerar cronograma via IA', async () => {
-    expect(authToken).toBeDefined(); 
+    expect(authToken).toBeDefined();
 
     return request(app.getHttpServer())
-      .post('/schedule/auto-generate')
+      .post('/schedule/generate-ai')
       .set('Authorization', `Bearer ${authToken}`)
       .send({
         description: 'Reforma de banheiro completa de 5m2',
