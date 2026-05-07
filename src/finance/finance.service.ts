@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { db } from '../config/firebase.config';
 
+export type ExpenseCategory = 'MATERIAL' | 'FREIGHT' | 'LABOR' | 'OTHER';
+
 @Injectable()
 export class FinanceService {
   private transactionsCollection = db.collection('transactions');
@@ -9,7 +11,7 @@ export class FinanceService {
     userId: string,
     data: {
       amount: number;
-      category: 'MATERIAL' | 'FREIGHT' | 'LABOR' | 'OTHER';
+      category: ExpenseCategory;
       description: string;
       relatedId?: string;
     },
@@ -23,6 +25,24 @@ export class FinanceService {
     };
     await docRef.set(transaction);
     return transaction;
+  }
+
+  async recordLabor(
+    userId: string,
+    data: {
+      workerName: string;
+      role: string;
+      amount: number;
+      date: string;
+      description?: string;
+    },
+  ) {
+    return this.recordExpense(userId, {
+      amount: data.amount,
+      category: 'LABOR',
+      description: `[Mão de obra] ${data.role} – ${data.workerName}${data.description ? ': ' + data.description : ''}`,
+      relatedId: `labor_${Date.now()}`,
+    });
   }
 
   async getWorkSummary(userId: string) {
@@ -39,7 +59,11 @@ export class FinanceService {
 
     transactions.forEach((t: any) => {
       summary.totalSpent += t.amount;
-      summary.byCategory[t.category] += t.amount;
+      if (summary.byCategory[t.category] !== undefined) {
+        summary.byCategory[t.category] += t.amount;
+      } else {
+        summary.byCategory.OTHER += t.amount;
+      }
     });
 
     return summary;

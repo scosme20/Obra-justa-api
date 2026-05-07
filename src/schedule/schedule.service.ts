@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { db } from '../config/firebase.config';
 import { ConfigService } from '@nestjs/config';
 import Groq from 'groq-sdk';
@@ -12,7 +8,7 @@ export class ScheduleService {
   private scheduleCollection = db.collection('schedules');
   private productsCollection = db.collection('products');
   private expensesCollection = db.collection('expenses');
-  private inventoryCollection = db.collection('inventory');
+  private workStockCollection = db.collection('work_stock'); // corrigido de 'inventory'
   private groq: Groq;
 
   constructor(private configService: ConfigService) {
@@ -50,6 +46,7 @@ export class ScheduleService {
     await this.scheduleCollection.doc(schedule.id).update({ tasks });
     return { success: true, taskId, newStatus: status.toUpperCase() };
   }
+
   async addRealExpense(
     userId: string,
     taskId: string,
@@ -77,42 +74,47 @@ export class ScheduleService {
       .get();
     const realExpenses = expensesSnapshot.docs.map((doc) => doc.data());
 
-    return schedule.tasks.map((task: any) => {
+    return (schedule.tasks || []).map((task: any) => {
       const totalSpent = realExpenses
         .filter((exp) => exp.taskId === task.id)
         .reduce((sum, exp) => sum + exp.amount, 0);
 
-      const difference = task.estimatedCost - totalSpent;
+      const estimatedCost = task.estimatedCost ?? 0;
+      const difference = estimatedCost - totalSpent;
 
       return {
         taskId: task.id,
         taskTitle: task.title,
-        estimated: task.estimatedCost,
+        estimated: estimatedCost,
         real: totalSpent,
         difference,
         isOverBudget: difference < 0,
-        percentage:
-          task.estimatedCost > 0 ? (totalSpent / task.estimatedCost) * 100 : 0,
+        percentage: estimatedCost > 0 ? (totalSpent / estimatedCost) * 100 : 0,
       };
     });
   }
+
   async getCashFlow(userId: string) {
     const schedule = await this.getMySchedule(userId);
     if (!schedule) throw new NotFoundException('Cronograma não encontrado');
 
     const projection: Record<string, number> = {};
 
-    for (const task of schedule.tasks) {
+    for (const task of schedule.tasks || []) {
+      if (!task.startDate) continue;
       const monthYear = task.startDate.substring(0, 7);
       let taskTotal = task.estimatedCost || 0;
 
       if (task.requiredItems?.length > 0) {
-        let marketValue = 0;
-        for (const item of task.requiredItems) {
-          const avgPrice = await this.getAverageMarketPrice(item.name);
-          marketValue +=
-            (avgPrice || item.estimatedUnitPrice || 0) * (item.quantity || 1);
-        }
+        const prices = await Promise.all(
+          task.requiredItems.map(async (item: any) => {
+            const avgPrice = await this.getAverageMarketPrice(item.name);
+            return (
+              (avgPrice ?? item.estimatedUnitPrice ?? 0) * (item.quantity || 1)
+            );
+          }),
+        );
+        const marketValue = prices.reduce((a, b) => a + b, 0);
         if (marketValue > 0) taskTotal = marketValue;
       }
       projection[monthYear] = (projection[monthYear] || 0) + taskTotal;
@@ -142,14 +144,17 @@ export class ScheduleService {
 
   async getAISavingSuggestions(userId: string) {
     const schedule = await this.getMySchedule(userId);
+    if (!schedule) throw new NotFoundException('Cronograma não encontrado');
+
     const comparison = await this.getBudgetComparison(userId);
     const deficit = comparison
       .filter((c) => c.isOverBudget)
       .reduce((s, c) => s + Math.abs(c.difference), 0);
 
-    if (deficit === 0) return { message: 'Orçamento em dia!' };
+    if (deficit === 0)
+      return { message: 'Orçamento em dia! Nenhuma sugestão necessária.' };
 
-    const futureTasks = schedule.tasks.filter(
+    const futureTasks = (schedule.tasks || []).filter(
       (t: any) => t.status !== 'COMPLETED',
     );
 
@@ -157,11 +162,11 @@ export class ScheduleService {
       messages: [
         {
           role: 'system',
-          content: `Engenheiro de Custos: Sugira cortes em materiais de acabamento para compensar R$ ${deficit}. Retorne JSON.`,
+          content: `Engenheiro de Custos: Sugira cortes em materiais de acabamento para compensar R$ ${deficit.toFixed(2)}. Retorne JSON com chave "suggestions" contendo um array de sugestões.`,
         },
         {
           role: 'user',
-          content: `Obra: ${schedule.description}. Fases: ${JSON.stringify(futureTasks)}`,
+          content: `Obra: ${schedule.description}. Fases pendentes: ${JSON.stringify(futureTasks)}`,
         },
       ],
       model: 'llama-3.3-70b-versatile',
@@ -173,42 +178,49 @@ export class ScheduleService {
 
   async getStockAlerts(userId: string) {
     const schedule = await this.getMySchedule(userId);
-    const inventorySnapshot = await this.inventoryCollection.doc(userId).get();
-    const stock = inventorySnapshot.data()?.items || [];
+    if (!schedule) return [];
+
+    // Corrigido: usa work_stock (mesma coleção do InventoryService)
+    const stockDoc = await this.workStockCollection.doc(userId).get();
+    const stock: any[] = stockDoc.exists ? (stockDoc.data()?.items ?? []) : [];
 
     const horizon = new Date();
     horizon.setDate(horizon.getDate() + 15);
 
-    return schedule.tasks
+    return (schedule.tasks || [])
       .filter(
         (t: any) =>
-          new Date(t.startDate) <= horizon && t.status !== 'COMPLETED',
+          t.startDate &&
+          new Date(t.startDate) <= horizon &&
+          t.status !== 'COMPLETED',
       )
       .flatMap((t: any) =>
-        (t.requiredItems || []).map((req: any) => {
-          const inStock =
-            stock.find(
-              (i: any) => i.name.toLowerCase() === req.name.toLowerCase(),
-            )?.quantity || 0;
-          return inStock < req.quantity
-            ? {
-                task: t.title,
-                item: req.name,
-                missing: req.quantity - inStock,
-                deadline: t.startDate,
-              }
-            : null;
-        }),
-      )
-      .filter((a) => a !== null);
+        (t.requiredItems || [])
+          .map((req: any) => {
+            const inStock =
+              stock.find(
+                (i: any) =>
+                  i.product?.toLowerCase() === req.name?.toLowerCase(),
+              )?.quantity ?? 0;
+            return inStock < (req.quantity ?? 0)
+              ? {
+                  task: t.title,
+                  item: req.name,
+                  missing: req.quantity - inStock,
+                  deadline: t.startDate,
+                }
+              : null;
+          })
+          .filter(Boolean),
+      );
   }
+
   async generateAutoSchedule(userId: string, description: string) {
-    const today = new Date().toISOString().split('T')[0];
     const completion = await this.groq.chat.completions.create({
       messages: [
         {
           role: 'system',
-          content: `Engenheiro Civil: Gere cronograma técnico JSON. Datas YYYY-MM-DD. Liste 'requiredItems' (name, quantity, estimatedUnitPrice).`,
+          content: `Engenheiro Civil: Gere cronograma técnico JSON. Use datas YYYY-MM-DD a partir de hoje. Liste 'requiredItems' com (name, quantity, estimatedUnitPrice). Retorne JSON com campos: title, phases (array com: id, title, startDate, endDate, status: "PENDING", dependsOn: [], estimatedCost, requiredItems, description).`,
         },
         { role: 'user', content: `Projeto: ${description}` },
       ],
@@ -216,16 +228,14 @@ export class ScheduleService {
       response_format: { type: 'json_object' },
     });
 
-    const schedule = JSON.parse(
-      completion.choices[0]?.message?.content || '{}',
-    );
+    const parsed = JSON.parse(completion.choices[0]?.message?.content || '{}');
     const docRef = this.scheduleCollection.doc();
     const data = {
       id: docRef.id,
       userId,
       description,
-      title: schedule.title,
-      tasks: schedule.phases || [],
+      title: parsed.title ?? 'Cronograma gerado por IA',
+      tasks: parsed.phases ?? [],
       createdAt: new Date().toISOString(),
       generatedByAi: true,
     };
@@ -235,23 +245,38 @@ export class ScheduleService {
 
   async handleDelay(userId: string, taskId: string, days: number) {
     const schedule = await this.getMySchedule(userId);
-    const tasks = schedule.tasks.map((t: any) => {
-      if (t.id !== taskId && !t.dependsOn?.includes(taskId)) return t;
-      const shift = (date: string) => {
-        const d = new Date(date);
-        d.setDate(d.getDate() + days);
-        return d.toISOString().split('T')[0];
-      };
+    if (!schedule) throw new NotFoundException('Cronograma não encontrado');
+
+    const shift = (date: string): string => {
+      if (!date) return date;
+      const d = new Date(date);
+      d.setDate(d.getDate() + days);
+      return d.toISOString().split('T')[0];
+    };
+
+    const tasks = (schedule.tasks || []).map((t: any) => {
+      const isTarget = t.id === taskId;
+      const isDependant = t.dependsOn?.includes(taskId);
+      if (!isTarget && !isDependant) return t;
       return {
         ...t,
         startDate: shift(t.startDate),
         endDate: shift(t.endDate),
         delayed: true,
+        delayDays: (t.delayDays || 0) + days,
+        updatedAt: new Date().toISOString(),
       };
     });
+
     await this.scheduleCollection
       .doc(schedule.id)
       .update({ tasks, lastUpdated: new Date().toISOString() });
-    return { success: true };
+
+    const affected = tasks.filter((t: any) => t.delayed).length;
+    return {
+      success: true,
+      message: `Tarefa e dependências adiadas em ${days} dia(s).`,
+      tasksAffected: affected,
+    };
   }
 }

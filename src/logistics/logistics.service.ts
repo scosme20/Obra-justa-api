@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { db } from '../config/firebase.config';
 import { InventoryService } from '../inventory/inventory.service';
-import { ScheduleService } from '../schedule/schedule.service';
 import { FinanceService } from '../finance/finance.service';
+import { NotificationService } from '../notifications/notifications.service';
 import { CreateFreightDto } from './dto/create-freight.dto';
 
 const EARTH_RADIUS_KM = 6371;
@@ -14,8 +14,8 @@ export class LogisticsService {
 
   constructor(
     private readonly inventoryService: InventoryService,
-    private readonly scheduleService: ScheduleService,
     private readonly financeService: FinanceService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   private calculateDistance(
@@ -27,15 +27,15 @@ export class LogisticsService {
     const dLat = (lat2 - lat1) * (Math.PI / 180);
     const dLon = (lon2 - lon1) * (Math.PI / 180);
     const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.sin(dLat / 2) ** 2 +
       Math.cos(lat1 * (Math.PI / 180)) *
         Math.cos(lat2 * (Math.PI / 180)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+        Math.sin(dLon / 2) ** 2;
     return parseFloat(
       (
         EARTH_RADIUS_KM *
-        (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
+        2 *
+        Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
       ).toFixed(1),
     );
   }
@@ -100,14 +100,20 @@ export class LogisticsService {
   async acceptFreight(driverId: string, freightId: string) {
     const ref = this.freightCollection.doc(freightId);
     const doc = await ref.get();
-
     if (!doc.exists) throw new NotFoundException('Frete não encontrado');
 
+    const freight = doc.data();
     await ref.update({
       driverId,
       status: 'IN_TRANSIT',
       acceptedAt: new Date().toISOString(),
     });
+
+    // Notifica solicitante e motorista
+    await this.notificationService.notifyFreightAccepted(
+      freight.requesterId,
+      driverId,
+    );
 
     return { success: true, message: 'Frete aceito! Vá até a loja.' };
   }
@@ -115,39 +121,42 @@ export class LogisticsService {
   async finishDelivery(freightId: string) {
     const ref = this.freightCollection.doc(freightId);
     const doc = await ref.get();
-
     if (!doc.exists) throw new NotFoundException('Frete não encontrado');
-    const freightData = doc.data();
 
+    const freight = doc.data();
     await ref.update({
       status: 'DELIVERED',
       deliveredAt: new Date().toISOString(),
     });
 
-    await this.financeService.recordExpense(freightData.requesterId, {
-      amount: freightData.price,
+    await this.financeService.recordExpense(freight.requesterId, {
+      amount: freight.price,
       category: 'FREIGHT',
       description: `Frete finalizado - Ref: ${freightId}`,
       relatedId: freightId,
     });
 
-    if (freightData.budgetId) {
+    if (freight.budgetId) {
       try {
         const budget = await this.inventoryService.getBudgetById(
-          freightData.budgetId,
+          freight.budgetId,
         );
-        if (budget && budget.items) {
+        if (budget?.items) {
           await this.inventoryService.updateWorkStock(
-            freightData.requesterId,
+            freight.requesterId,
             budget.items,
           );
         }
       } catch {
-        console.log(
-          'Orçamento não encontrado para atualização de estoque, pulando...',
-        );
+        console.log('Orçamento não encontrado para atualização de estoque.');
       }
     }
+
+    // Notifica solicitante
+    await this.notificationService.notifyDeliveryFinished(
+      freight.requesterId,
+      freightId,
+    );
 
     return { success: true, message: 'Entrega concluída!' };
   }

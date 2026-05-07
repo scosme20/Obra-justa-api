@@ -6,14 +6,17 @@ import {
 import { db } from '../config/firebase.config';
 import * as PDFDocument from 'pdfkit';
 import { FinanceService } from '../finance/finance.service';
+import { NotificationService } from '../notifications/notifications.service';
 
 @Injectable()
 export class InventoryService {
   private budgetsCollection = db.collection('budgets');
   private workStockCollection = db.collection('work_stock');
-  private usersCollection = db.collection('users');
 
-  constructor(private readonly financeService: FinanceService) {}
+  constructor(
+    private readonly financeService: FinanceService,
+    private readonly notificationService: NotificationService,
+  ) {}
 
   async createBudget(dataOrItems: any, userId: string, extraInfo: any = {}) {
     const docRef = this.budgetsCollection.doc();
@@ -70,18 +73,18 @@ export class InventoryService {
 
   async getWorkStock(userId: string) {
     const doc = await this.workStockCollection.doc(userId).get();
-    return doc.exists ? doc.data() : { items: [] };
+    return doc.exists ? doc.data() : { items: [], lastUpdate: null };
   }
 
   async updateWorkStock(userId: string, items: any[]) {
     const stockRef = this.workStockCollection.doc(userId);
     const stockDoc = await stockRef.get();
-    const currentItems = stockDoc.exists ? stockDoc.data().items : [];
+    const currentItems: any[] = stockDoc.exists ? stockDoc.data().items : [];
 
     items.forEach((newItem) => {
       const productName = String(newItem.product).toLowerCase().trim();
       const existingIndex = currentItems.findIndex(
-        (i: any) => i.product === productName,
+        (i) => i.product === productName,
       );
 
       if (existingIndex > -1) {
@@ -111,17 +114,14 @@ export class InventoryService {
     if (!stockDoc.exists)
       throw new NotFoundException('Estoque não encontrado.');
 
-    const data = stockDoc.data();
-    const items = data.items || [];
+    const items: any[] = stockDoc.data().items || [];
     const productName = product.toLowerCase().trim();
-    const itemIndex = items.findIndex((i: any) => i.product === productName);
+    const itemIndex = items.findIndex((i) => i.product === productName);
 
-    if (itemIndex === -1) {
+    if (itemIndex === -1)
       throw new BadRequestException(
         `O item "${product}" não existe no seu estoque.`,
       );
-    }
-
     if (items[itemIndex].quantity < quantity) {
       throw new BadRequestException(
         `Saldo insuficiente. Disponível: ${items[itemIndex].quantity}. Tentativa: ${quantity}`,
@@ -180,12 +180,151 @@ export class InventoryService {
       description: `Compra - Orçamento ${budgetId}`,
       relatedId: budgetId,
     });
-
     await this.budgetsCollection.doc(budgetId).update({ status: 'PURCHASED' });
+
+    // Notifica confirmação da compra
+    await this.notificationService.notifyPurchaseConfirmed(
+      userId,
+      budgetId,
+      budget.totalValue,
+    );
+
     return { success: true };
   }
 
   async generateBudgetPDF(budgetId: string): Promise<Buffer> {
-    return Buffer.from([]);
+    const budget = await this.getBudgetById(budgetId);
+
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+      const chunks: Buffer[] = [];
+
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      // ── Cabeçalho ──────────────────────────────────────────────────────
+      doc.fontSize(20).font('Helvetica-Bold').text('Obra Justa', 40, 40);
+      doc
+        .fontSize(10)
+        .font('Helvetica')
+        .fillColor('#666')
+        .text('Orçamento de Materiais', 40, 68);
+
+      doc.moveTo(40, 85).lineTo(555, 85).strokeColor('#e0e0e0').stroke();
+
+      // ── Metadados ──────────────────────────────────────────────────────
+      doc.fillColor('#111').fontSize(9).font('Helvetica');
+      const meta = [
+        ['Nº do Orçamento', budget.id],
+        ['Solicitado por', budget.requestedBy],
+        ['Empreiteiro', budget.contractor],
+        ['Fornecedor', budget.storeName],
+        ['Data', new Date(budget.createdAt).toLocaleDateString('pt-BR')],
+        ['Status', budget.status],
+      ];
+      let y = 100;
+      meta.forEach(([label, value]) => {
+        doc
+          .font('Helvetica-Bold')
+          .text(`${label}:`, 40, y, { continued: true });
+        doc.font('Helvetica').text(` ${value}`);
+        y += 16;
+      });
+
+      // ── Tabela de itens ─────────────────────────────────────────────────
+      y += 10;
+      doc.moveTo(40, y).lineTo(555, y).strokeColor('#e0e0e0').stroke();
+      y += 8;
+
+      const cols = {
+        product: 40,
+        qty: 240,
+        price: 310,
+        subtotal: 420,
+        status: 490,
+      };
+
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#333');
+      doc.text('Produto', cols.product, y);
+      doc.text('Qtd', cols.qty, y);
+      doc.text('Preço Unit.', cols.price, y);
+      doc.text('Subtotal', cols.subtotal, y);
+      doc.text('Status IA', cols.status, y);
+      y += 14;
+
+      doc.moveTo(40, y).lineTo(555, y).strokeColor('#ccc').stroke();
+      y += 6;
+
+      doc.font('Helvetica').fillColor('#111').fontSize(8.5);
+      (budget.items || []).forEach((item: any, idx: number) => {
+        if (idx % 2 === 0) {
+          doc
+            .rect(40, y - 2, 515, 14)
+            .fillColor('#f9f9f9')
+            .fill();
+        }
+        doc.fillColor('#111');
+        doc.text(String(item.product).toUpperCase(), cols.product, y, {
+          width: 190,
+        });
+        doc.text(String(item.quantity), cols.qty, y);
+        doc.text(`R$ ${Number(item.price).toFixed(2)}`, cols.price, y);
+        doc.text(`R$ ${Number(item.subtotal).toFixed(2)}`, cols.subtotal, y);
+
+        const statusColor =
+          item.statusIa === 'CARO'
+            ? '#c0392b'
+            : item.statusIa === 'BARATO'
+              ? '#27ae60'
+              : '#f39c12';
+        doc.fillColor(statusColor).text(item.statusIa || '-', cols.status, y);
+        doc.fillColor('#111');
+        y += 16;
+
+        if (y > 730) {
+          doc.addPage();
+          y = 40;
+        }
+      });
+
+      // ── Total ───────────────────────────────────────────────────────────
+      y += 4;
+      doc.moveTo(40, y).lineTo(555, y).strokeColor('#ccc').stroke();
+      y += 10;
+      doc
+        .fontSize(11)
+        .font('Helvetica-Bold')
+        .text(`Total: R$ ${Number(budget.totalValue).toFixed(2)}`, 400, y, {
+          align: 'right',
+          width: 155,
+        });
+
+      if (budget.economyValue && budget.economyValue !== 'R$ 0.00') {
+        y += 16;
+        doc
+          .fontSize(9)
+          .font('Helvetica')
+          .fillColor('#27ae60')
+          .text(
+            `Economia estimada: ${budget.economyValue} (${budget.totalEconomy})`,
+            400,
+            y,
+            { align: 'right', width: 155 },
+          );
+      }
+
+      // ── Rodapé ──────────────────────────────────────────────────────────
+      doc
+        .fillColor('#999')
+        .fontSize(8)
+        .font('Helvetica')
+        .text('Gerado por Obra Justa API', 40, 790, {
+          align: 'center',
+          width: 515,
+        });
+
+      doc.end();
+    });
   }
 }
