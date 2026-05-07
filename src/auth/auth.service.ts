@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { db } from '../config/firebase.config';
 import * as bcrypt from 'bcrypt';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 
 @Injectable()
 export class AuthService {
@@ -28,7 +29,8 @@ export class AuthService {
       throw new UnauthorizedException('E-mail ou senha inválidos');
     }
 
-    const { password: _, ...result } = userData;
+    const { password: _pwd, ...result } = userData;
+    void _pwd;
     return result;
   }
 
@@ -44,17 +46,32 @@ export class AuthService {
     };
   }
 
-  async register(data: any) {
+  async register(data: RegisterDto) {
+    const existing = await db
+      .collection('users')
+      .where('email', '==', data.email)
+      .get();
+
+    if (!existing.empty) {
+      throw new UnauthorizedException('E-mail já cadastrado');
+    }
+
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const userRef = db.collection('users').doc();
+    const { password: _pwd, ...safeData } = {
+      ...data,
+      password: data.password,
+    };
+    void _pwd;
     const newUser = {
       id: userRef.id,
-      ...data,
+      ...safeData,
       password: hashedPassword,
       createdAt: new Date().toISOString(),
     };
     await userRef.set(newUser);
-    const { password, ...result } = newUser;
+    const { password: _p2, ...result } = newUser;
+    void _p2;
     return result;
   }
 }

@@ -1,7 +1,8 @@
 import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
-import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
+import { RegisterDto } from './dto/register.dto';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -10,18 +11,8 @@ export class AuthController {
 
   @Post('register')
   @ApiOperation({ summary: 'Criar uma nova conta de usuário' })
-  @ApiBody({
-    schema: {
-      example: {
-        name: 'Seu Nome',
-        email: 'usuario@email.com',
-        password: 'senha123',
-        role: 'owner',
-      },
-    },
-  })
-  async register(@Body() body: any) {
-    return await this.authService.register(body);
+  async register(@Body() registerDto: RegisterDto) {
+    return await this.authService.register(registerDto);
   }
 
   @Post('login')

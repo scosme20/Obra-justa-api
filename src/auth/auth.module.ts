@@ -8,18 +8,20 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
-    PassportModule,
+    // Registra o Passport com a estratégia padrão
+    PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret:
-          configService.get<string>('JWT_SECRET') || 'segredo_super_secreto',
-        signOptions: { expiresIn: '1d' }, 
+        secret: configService.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '1d' },
       }),
     }),
   ],
   providers: [AuthService, JwtStrategy],
   controllers: [AuthController],
+  // ESSENCIAL: Exportar para que ScheduleModule e outros reconheçam o Token
+  exports: [AuthService, JwtStrategy, PassportModule],
 })
 export class AuthModule {}

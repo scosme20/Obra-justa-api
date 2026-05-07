@@ -115,20 +115,22 @@ export class MarketplaceController {
     );
   }
 
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @Post('review')
   @ApiOperation({ summary: 'Avaliar um profissional/serviço' })
   async review(
+    @Request() req,
     @Body()
     b: {
       profileId: string;
-      userId: string;
       rating: number;
       comment: string;
     },
   ) {
     return await this.marketplaceService.addReview(
       b.profileId,
-      b.userId,
+      req.user.userId,
       b.rating,
       b.comment,
     );
